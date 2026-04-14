@@ -1,0 +1,341 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  USER
+  MODERATOR
+  ADMIN
+}
+
+enum UserStatus {
+  ACTIVE
+  SUSPENDED
+  BANNED
+}
+
+enum ListingStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  REMOVED
+  BANNED
+}
+
+enum CategoryKind {
+  ACCOUNT
+  CURRENCY
+  SERVICE
+  ITEM
+}
+
+enum OrderStatus {
+  AWAITING_PAYMENT
+  PAID
+  IN_DELIVERY
+  COMPLETED
+  CANCELLED
+  DISPUTED
+  REFUNDED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
+}
+
+enum ReviewStatus {
+  VISIBLE
+  HIDDEN
+  PENDING_MODERATION
+}
+
+enum DisputeStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED_BUYER
+  RESOLVED_SELLER
+  CLOSED
+}
+
+enum MessageType {
+  TEXT
+  IMAGE
+  FILE
+  SYSTEM
+}
+
+model User {
+  id                 String      @id @default(uuid())
+  email              String?     @unique
+  emailVerifiedAt    DateTime?
+  passwordHash       String?
+  displayName        String
+  avatarUrl          String?
+  role               UserRole    @default(USER)
+  sellerVerified     Boolean     @default(false)
+  trustScore         Decimal     @default(50) @db.Decimal(5, 2)
+  status             UserStatus  @default(ACTIVE)
+  lastSeenAt         DateTime    @default(now())
+  createdAt          DateTime    @default(now())
+  updatedAt          DateTime    @updatedAt
+  twoFactorEnabled   Boolean     @default(false)
+  twoFactorSecret    String?
+  referralCode       String?     @unique
+  referredById       String?
+  referredBy         User?       @relation("UserReferrals", fields: [referredById], references: [id])
+  referrals          User[]      @relation("UserReferrals")
+  oauthAccounts      OAuthAccount[]
+  listings           Listing[]
+  ordersAsBuyer      Order[]     @relation("BuyerOrders")
+  ordersAsSeller     Order[]     @relation("SellerOrders")
+  reviewsGiven       Review[]    @relation("ReviewsGiven")
+  reviewsReceived    Review[]    @relation("ReviewsReceived")
+  messages           Message[]
+  loginAttempts      LoginAttempt[]
+  refreshTokens      RefreshToken[]
+  auditLogs AuditLog[]  @relation("AuditActor")
+  achievements UserAchievement[]
+  wallet       Wallet?
+}
+
+model OAuthAccount {
+  id             String   @id @default(uuid())
+  userId         String
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  provider       String
+  providerUserId String
+  createdAt      DateTime @default(now())
+
+  @@unique([provider, providerUserId])
+}
+
+model RefreshToken {
+  id         String   @id @default(uuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash  String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+}
+
+model LoginAttempt {
+  id        String   @id @default(uuid())
+  userId    String?
+  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  email     String
+  ip        String?
+  success   Boolean
+  createdAt DateTime @default(now())
+
+  @@index([email, createdAt])
+}
+
+model Game {
+  id        String     @id @default(uuid())
+  slug      String     @unique
+  name      String
+  iconUrl   String?
+  isActive  Boolean    @default(true)
+  categories Category[]
+  listings  Listing[]
+}
+
+model Category {
+  id String         @id @default(uuid())
+  gameId        String
+  game          Game           @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  slug          String
+  name          String
+  kind          CategoryKind
+  subcategories Subcategory[]
+  listings      Listing[]
+
+  @@unique([gameId, slug])
+}
+
+model Subcategory {
+  id         String    @id @default(uuid())
+  categoryId String
+  category   Category  @relation(fields: [categoryId], references: [id], onDelete: Cascade)
+  slug       String
+  name       String
+  listings   Listing[]
+
+  @@unique([categoryId, slug])
+}
+
+model Listing {
+  id                 String        @id @default(uuid())
+  sellerId           String
+  seller             User          @relation(fields: [sellerId], references: [id], onDelete: Cascade)
+  gameId             String
+  game               Game          @relation(fields: [gameId], references: [id])
+  categoryId         String
+  category           Category      @relation(fields: [categoryId], references: [id])
+  subcategoryId      String
+  subcategory        Subcategory   @relation(fields: [subcategoryId], references: [id])
+  title              String
+  description        String
+  priceAmount        Decimal       @db.Decimal(18, 2)
+  currency           String        @default("RUB")
+  quantity           Int           @default(1)
+  deliveryTimeHours  Int           @default(24)
+  region             String?
+  status             ListingStatus @default(ACTIVE)
+  promotedUntil      DateTime?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+  orders             Order[]
+
+  @@index([gameId, categoryId, status])
+  @@index([priceAmount])
+}
+
+model Order {
+  id               String      @id @default(uuid())
+  listingId        String
+  listing          Listing     @relation(fields: [listingId], references: [id])
+  buyerId          String
+  buyer            User        @relation("BuyerOrders", fields: [buyerId], references: [id])
+  sellerId         String
+  seller           User        @relation("SellerOrders", fields: [sellerId], references: [id])
+  status           OrderStatus @default(AWAITING_PAYMENT)
+  priceAmount      Decimal     @db.Decimal(18, 2)
+  currency         String      @default("RUB")
+  platformFeeAmount Decimal    @default(0) @db.Decimal(18, 2)
+  autoConfirmAt    DateTime?
+  disputeOpenedAt  DateTime?
+  disputeReason    String?
+  createdAt        DateTime    @default(now())
+  updatedAt        DateTime    @updatedAt
+  payments         Payment[]
+  chat             Chat?
+  review           Review?
+  dispute          Dispute?
+
+  @@index([buyerId, status])
+  @@index([sellerId, status])
+}
+
+model Payment {
+  id          String        @id @default(uuid())
+  orderId     String
+  order       Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  provider    String
+  providerRef String?
+  amount      Decimal       @db.Decimal(18, 2)
+  currency    String
+  status      PaymentStatus @default(PENDING)
+  rawPayload  Json?
+  createdAt   DateTime      @default(now())
+}
+
+model Chat {
+  id        String @id @default(uuid())
+  orderId   String    @unique
+  order     Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  createdAt DateTime  @default(now())
+  messages  Message[]
+}
+
+model Message {
+  id        String      @id @default(uuid())
+  chatId    String
+  chat      Chat        @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  senderId  String
+  sender    User        @relation(fields: [senderId], references: [id])
+  type      MessageType @default(TEXT)
+  content   String
+  createdAt DateTime    @default(now())
+
+  @@index([chatId, createdAt])
+}
+
+model Review {
+  id         String       @id @default(uuid())
+  orderId    String       @unique
+  order      Order        @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  reviewerId String
+  reviewer   User         @relation("ReviewsGiven", fields: [reviewerId], references: [id])
+  revieweeId String
+  reviewee   User         @relation("ReviewsReceived", fields: [revieweeId], references: [id])
+  rating     Int
+  text       String
+  status     ReviewStatus @default(VISIBLE)
+  createdAt  DateTime     @default(now())
+
+  @@index([revieweeId])
+}
+
+model Dispute {
+  id             String        @id @default(uuid())
+  orderId        String        @unique
+  order          Order         @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  openedBy       String
+  reasonCode     String
+  description    String
+  status         DisputeStatus @default(OPEN)
+  resolverId     String?
+  resolutionNote String?
+  createdAt      DateTime      @default(now())
+  resolvedAt     DateTime?
+}
+
+model Wallet {
+  id        String         @id @default(uuid())
+  userId    String         @unique
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance   Decimal        @default(0) @db.Decimal(18, 2)
+  currency  String         @default("RUB")
+  entries   LedgerEntry[]
+}
+
+model LedgerEntry {
+  id        String   @id @default(uuid())
+  walletId  String
+  wallet    Wallet   @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  orderId   String?
+  amount    Decimal  @db.Decimal(18, 2)
+  kind      String
+  meta      Json?
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id String   @id @default(uuid())
+  actorId    String
+  actor      User     @relation("AuditActor", fields: [actorId], references: [id])
+  action     String
+  entityType String
+  entityId   String?
+  before     Json?
+  after      Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+}
+
+model Achievement {
+  id          String @id @default(uuid())
+  slug        String              @unique
+  name        String
+  description String
+  users       UserAchievement[]
+}
+
+model UserAchievement {
+  userId        String
+  achievementId String
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  achievement   Achievement @relation(fields: [achievementId], references: [id], onDelete: Cascade)
+  unlockedAt    DateTime    @default(now())
+
+  @@id([userId, achievementId])
+}
