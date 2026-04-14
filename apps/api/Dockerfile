@@ -7,7 +7,7 @@ FROM node:20-alpine AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN npx prisma generate && npm run build
+RUN npx prisma generate --schema=./prisma/schema.prisma && npm run build
 
 FROM node:20-alpine AS runner
 WORKDIR /app
@@ -17,4 +17,4 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/prisma ./prisma
 COPY package.json ./
 EXPOSE 3001
-CMD ["sh", "-c", "npx prisma db push && node dist/main.js"]
+CMD ["sh", "-c", "npx prisma db push --schema=./prisma/schema.prisma && node dist/main.js"]
